@@ -2,33 +2,39 @@ import networkx as nx
 import numpy as np
 import matplotlib.pyplot as plt
 import scipy as sp
+import cpnet
 
 
 class Node:
-    def __init__(self, dim=2, t=0):
+    # definition of Node in the graph
+    def __init__(self, dim=2, t=2, order=0):
         self.preference = np.random.rand(dim)
         self.num_link = 10 + np.random.randint(0, 2)
         self.t_add = t
+        self.t_order = order
 
     def __str__(self):
-        return str(self.t_add)
+        return ''.join([str(self.t_add), '_', str(self.t_order)])
 
 
 def step_nodes_num(graph, t):
+    # calculate the number of nodes added to the graph at a specific time step
     num = 1
     return num
 
 
-def generate_nodes_step(graph, t):
+def generate_nodes_step(graph, t, dim):
+    # generate a set of nodes to be added to the graph at a specific time step
     num = step_nodes_num(graph, t)
     nodes_set = []
     for i in range(num):
-        new_node = Node(2, t)
+        new_node = Node(dim, t, i + 1)
         nodes_set.append(new_node)
     return nodes_set
 
 
 def select_proportion(nodes_set, probability, num):
+    # select a specific number of nodes in the given nodes set under a given probability distribution
     candidates = [node for node in nodes_set]
     p = [x for x in probability]
     chosen = []
@@ -47,6 +53,8 @@ def select_proportion(nodes_set, probability, num):
 
 
 def insert_node_step(graph, nodes_set):
+    # insert a given set of nodes to graph
+    # obeying the assumptions of extended scale-free model
     link_to_nodes = []
     for node_x in nodes_set:
         total = 0
@@ -63,10 +71,11 @@ def insert_node_step(graph, nodes_set):
     return
 
 
-def generate_random_graph(num_nodes, probability):
+def generate_random_graph(num_nodes, probability, dim):
+    # generate a random undirected graph mainly for initializing
     g = nx.Graph()
     for i in range(num_nodes):
-        new_node = Node(2, -1)
+        new_node = Node(dim, -1, i)
         count = 0
         link_nodes = []
         for node_exist in g.nodes():
@@ -82,10 +91,12 @@ def generate_random_graph(num_nodes, probability):
 
 
 def f_1(x, a, b):
+    # target function for degree distribution fitting
     return a * x ** (-b)
 
 
 def fit_degree_distribution(x_group, y_group):
+    # fitting process for degree distribution
     flag = 0
     xs = [x for x in x_group]
     ys = [y for y in y_group]
@@ -100,31 +111,151 @@ def fit_degree_distribution(x_group, y_group):
     return xs, y_fit, a, b
 
 
-G = generate_random_graph(20, 0.5)
-t_step = 100
+def cp_detection_discrete(graph):
+    # detect discrete core-periphery structure using BE algorithm
+    alg = cpnet.BE()
+    alg.detect(graph)
+    core_judge_address = alg.get_coreness()
+    core_belong_address = alg.get_pair_id()
+    core_judge_str = {}
+    core_belong_str = {}
+    # translate the key from address to str and find out the core nodes
+    count = 0
+    core_nodes_str = []
+    core_nodes_address = []
+    for node in graph:
+        core_judge_str[node.__str__()] = core_judge_address[node]
+        core_belong_str[node.__str__()] = core_belong_address[node]
+        if core_judge_address[node] == 1:
+            count = count + 1
+            core_nodes_str.append(node.__str__())
+            core_nodes_address.append(node)
+
+    plt.subplot(111)
+    ax = plt.gca()
+    cpnet.draw(graph, core_belong_address, core_judge_address, ax)
+    plt.title(''.join(['core nodes number:', str(count)]))
+    plt.show()
+
+    # significant test
+    sig_c, sig_x, significant, p = cpnet.qstest(core_belong_address, core_judge_address, graph, alg)
+    print('significant:', significant)
+    print('p value:', p)
+    plt.subplot(111)
+    ax = plt.gca()
+    # cpnet.draw(graph, sig_c, sig_x, ax)
+    plt.show()
+    return core_nodes_str, core_nodes_address
+
+
+def cp_detection_continuous(graph):
+    # detect continuous core-periphery structure using Miners algorithm
+    alg = cpnet.MINRES()
+    alg.detect(graph)
+    core_extent_address = alg.get_coreness()
+    core_belong_address = alg.get_pair_id()
+    core_extent_str = {}
+    core_belong_str = {}
+    # translate the key from address to str and find out the core nodes
+    count = 0
+    core_nodes_str = []
+    core_nodes_address = []
+    core_extent_statistics = [0 for i in range(100)]
+    for node in graph:
+        core_extent_str[node.__str__()] = core_extent_address[node]
+        core_belong_str[node.__str__()] = core_belong_address[node]
+        core_extent_statistics[int(core_extent_address[node] / 0.01)] += 1
+        if core_extent_address[node] > 0.5:
+            count = count + 1
+            core_nodes_str.append(node.__str__())
+            core_nodes_address.append(node)
+    print('core nodes:', core_nodes_str)
+    plt.subplot(121)
+    ax = plt.gca()
+    cpnet.draw(graph, core_belong_address, core_extent_address, ax, draw_nodes_kwd={'node_size': 20})
+    plt.title('graph')
+
+    plt.subplot(122)
+    plt.plot(0.01 * np.array(range(100)), core_extent_statistics)
+    plt.title('Coreness statistics')
+    plt.show()
+
+    sig_c, sig_x, significant, p = cpnet.qstest(core_belong_address, core_extent_address, graph, alg)
+    print('significant:', significant)
+    print('p value:', p)
+    plt.subplot(111)
+    ax = plt.gca()
+    cpnet.draw(graph, sig_c, sig_x, ax)
+    plt.show()
+    return
+
+
+def cp_detection_multiple(graph):
+    alg = cpnet.KM_config()
+    alg.detect(graph)
+    core_extent_address = alg.get_coreness()
+    core_belong_address = alg.get_pair_id()
+    core_extent_str = {}
+    core_belong_str = {}
+    for node in graph:
+        core_extent_str[node.__str__()] = core_extent_address[node]
+        core_belong_str[node.__str__()] = core_belong_address[node]
+    print(core_extent_str)
+    print(core_belong_str)
+    plt.subplot(111)
+    ax = plt.gca()
+    cpnet.draw(graph, core_belong_address, core_extent_address, ax, draw_nodes_kwd={'node_size': 20})
+    plt.show()
+
+    # significant test
+    sig_c, sig_x, significant, p = cpnet.qstest(core_belong_address, core_extent_address, graph, alg)
+    print('significant:', significant)
+    print('p value:', p)
+    plt.subplot(111)
+    ax = plt.gca()
+    cpnet.draw(graph, sig_c, sig_x, ax)
+    plt.show()
+    return
+
+
+
+dimension = 2
+G = generate_random_graph(20, 0.3, dimension)
+t_step = 1000
 for t_add in range(t_step):
-    new_nodes_set = generate_nodes_step(G, t_add)
+    if t_add % 100 == 0:
+        print(t_add, 'time steps ended')
+    new_nodes_set = generate_nodes_step(G, t_add, dimension)
     insert_node_step(G, new_nodes_set)
 
+# calculate clustering coefficient
 cluster_coef = nx.average_clustering(G)
 print('Clustering Coefficient:', cluster_coef)
 
 # small_world_coef = nx.sigma(G)
 # print(small_world_coef)
 
-ave_shortest_l = nx.average_shortest_path_length(G)
-print('Average shortest length:', ave_shortest_l)
+# calculate the average_shortest path
+# ave_shortest_l = nx.average_shortest_path_length(G)
+# print('Average shortest length:', ave_shortest_l)
 
+# use power law function to fit the degree distribution
 distribution = nx.degree_histogram(G)
 X_fit, Y_fit, A, Gamma = fit_degree_distribution(range(len(distribution)), distribution)
 print('Gamma:', Gamma)
 
+# core-periphery structure
+# c_str, c_address = cp_detection_discrete(G)
+# print(c_str)
+cp_detection_continuous(G)
+# cp_detection_multiple(G)
+
 # Visualize
-plt.subplot(111)
-plt.plot(range(len(distribution)), distribution)
-plt.plot(X_fit, Y_fit)
-plt.title(' '.join(['Degree distribution, Clustering Coefficient:', str(round(cluster_coef, 4)),
-                    'Average shortest length:', str(round(ave_shortest_l, 4)), 'Gamma:', str(round(Gamma, 4))]))
+# plt.subplot(111)
+# plt.plot(range(len(distribution)), distribution)
+# plt.plot(X_fit, Y_fit)
+# plt.title(' '.join(['Degree distribution, Clustering Coefficient:', str(round(cluster_coef, 4)),
+#                     'Average shortest length:', str(round(ave_shortest_l, 4)), 'Gamma:', str(round(Gamma, 4))]))
 
 # plt.subplot(122)
 # options = {
